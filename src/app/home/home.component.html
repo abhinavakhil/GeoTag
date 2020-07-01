@@ -1,0 +1,28 @@
+<app-navbar></app-navbar>
+<br />
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-md-8 ">
+      <div class="card card-body">
+        <div id="map"></div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div style="text-align:center">
+        <br />
+        <h6>Ping Waste Prone Location on Map</h6>
+        <br />
+        <img src="../../assets/LeGY.txt" class="img-thumbnail" />
+        <br />
+        <br />
+        <button class="btn btn-success btn-block" (click)="nearby()">
+          Ping Current Location
+        </button>
+        <br />
+        <button class="btn btn-warning btn-block" routerLink="/showData">
+          Show Intensity Wise Data
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

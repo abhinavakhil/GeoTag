@@ -1,0 +1,22 @@
+#map {
+  height: 100vh;
+  width: 100%;
+}
+
+.info_css {
+  color: #000;
+  text-decoration: none;
+  background-color: #fff;
+  width: 270px;
+  padding: 5px;
+  font-size: 12px;
+}
+div.header {
+  position: relative;
+  background-color: #191919;
+  color: #fff;
+  line-height: 20px;
+  font-size: 13px;
+  vertical-align: middle;
+  padding: 5px 35px 5px 5px;
+}
