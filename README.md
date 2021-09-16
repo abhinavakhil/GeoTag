@@ -1,3 +1,13 @@
+# Geotag is a waste management application which triggers alerts by geotracking of waste and mapping areas with high waste index.
+  # It was build at HackVisit3.0 under the sustainable development theme.
+  # features include waste detecting using machine learning and it provides the areas which has most number of waste clusters.
+  # Tech stack used: 
+   1. Angular 
+   2. Typescript
+   3. Microsoft cognitive vision api ( to detect waste )
+   4. firebase for data storage.
+  # Build under 36 hours.
+
 # Geotag
 
 This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 8.3.19.
