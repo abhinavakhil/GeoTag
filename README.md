@@ -6,7 +6,7 @@ GeoTag is an AI-first waste mapping app. Snap a photo of a dump and free, on-dev
 
 No backend. No API keys. No photos uploaded. Everything runs in the browser.
 
-> 🏆 GeoTag started as a hackathon project by team **sudoNinjas** at **hackpcbt (February 2020)**, where it won a category prize. See the original submission on [Devfolio](https://devfolio.co/projects/geotag-1). This repo is the rebuilt, fully client-side version.
+🏆 GeoTag started as a hackathon project by team **sudoNinjas** at **hackpcbt (February 2020)**, where it won a category prize. See the original submission on [Devfolio](https://devfolio.co/projects/geotag-1). This repo is the rebuilt, fully client-side version.
 
 ---
 
