@@ -151,7 +151,17 @@ dialog.cam::backdrop { background: rgba(17,26,20,.6); }
 .panel h3.sub { font: 700 12px var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
 .rec-flag { font-size: 14px; line-height: 22px; text-align: center; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
 
-/* cleanup verification dialog */
+/* account */
+.who { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.who b { font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role { font-style: normal; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--mint); color: var(--green); text-transform: capitalize; }
+.role.officer, .role.admin { background: var(--ink); color: #fff; }
+.role.crew { background: #e8f1fb; color: #2f7fd8; }
+.role.queued { background: #fdf1e6; color: #b45f1d; text-transform: none; }
+dialog.verify input.email { width: 100%; padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; font: 15px var(--body); background: var(--mint-2); }
+.ticket input:disabled { opacity: .7; cursor: default; }
+
+/* cleanup verification dialog
 dialog.verify { border: 0; border-radius: 20px; padding: 22px; max-width: min(560px, 94vw); width: 100%; box-shadow: var(--shadow); animation: in .25s ease; }
 dialog.verify::backdrop { background: rgba(17,26,20,.55); }
 dialog.verify h2 { font-size: 28px; margin-bottom: 4px; }

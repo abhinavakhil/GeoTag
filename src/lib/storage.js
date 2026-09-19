@@ -1,7 +1,7 @@
 // localStorage persistence. Every read/write is guarded: private mode or a full quota must never crash the app.
 // ponytail: one browser = one map. Swap for a backend when reports need to be shared between devices.
 export const KEYS = { reports: 'geotag.reports', alerted: 'geotag.alerted', places: 'geotag.places', memory: 'geotag.memory',
-  tickets: 'geotag.tickets', wards: 'geotag.wards', history: 'geotag.history' };
+  tickets: 'geotag.tickets', wards: 'geotag.wards', history: 'geotag.history', queue: 'geotag.queue' };
 
 export const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 export const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };

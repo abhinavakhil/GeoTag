@@ -7,6 +7,7 @@ import { aiClassify, toCanvas } from '../lib/vision.js';
 import WasteMap from '../components/WasteMap.jsx';
 import ReportForm from '../components/ReportForm.jsx';
 import { downloadMd } from './Report.jsx';
+import * as sync from '../lib/sync.js';
 
 const RANK = { high: 1, critical: 2 };
 const DEFAULT_CENTER = [28.6139, 77.209];
@@ -25,7 +26,12 @@ export default function MapApp() {
   const [toasts, setToasts] = useState([]);
   const [verify, setVerify] = useState(null); // report being marked cleaned, awaiting an "after" photo
   const [notifyOn, setNotifyOn] = useState(() => window.Notification?.permission === 'granted');
+  const [auth, setAuth] = useState({ user: null, role: sync.enabled ? 'anon' : 'admin' }); // local-only mode: everything allowed
+  const [signin, setSignin] = useState(false);
+  const [pending, setPending] = useState(sync.pendingCount);
   const mapCenter = useRef(DEFAULT_CENTER);
+  const reportsRef = useRef(reports); reportsRef.current = reports;
+  const role = auth.role, officer = sync.can(role, 'officer'), admin = sync.can(role, 'admin');
 
   const toast = (msg, bad = false) => {
     const id = Math.random();
@@ -38,6 +44,36 @@ export default function MapApp() {
   useEffect(() => { store(KEYS.tickets, tickets); }, [tickets]);
   useEffect(() => { store(KEYS.wards, wards); }, [wards]);
   useEffect(() => { store(KEYS.history, history); }, [history]);
+
+  // Shared backend (optional). Sign-in state, first pull, live changes, and re-push of anything queued offline.
+  useEffect(() => {
+    if (!sync.enabled) return;
+    let unsubAuth, unsubLive;
+    sync.onAuth(async (a) => {
+      setAuth(a);
+      if (!a.user) { unsubLive?.(); unsubLive = null; return; }
+      try {
+        const remote = await sync.pullAll();
+        setReports((local) => { const byId = Object.fromEntries(local.map((r) => [r.id, r])); for (const r of remote.reports) byId[r.id] = { ...byId[r.id], ...r }; return Object.values(byId).sort((x, y) => x.time - y.time); });
+        setTickets((t) => ({ ...t, ...remote.tickets }));
+        if (remote.wards) setWards(remote.wards);
+        const n = await sync.flush(reportsRef.current); setPending(sync.pendingCount());
+        if (n) toast(`☁️ Synced ${n} report${n > 1 ? 's' : ''} saved while offline.`);
+        unsubLive = await sync.subscribe(({ table, type, row, id }) => {
+          if (table === 'reports') setReports((rs) => type === 'DELETE' ? rs.filter((r) => r.id !== id) : rs.some((r) => r.id === row.id) ? rs.map((r) => (r.id === row.id ? { ...r, ...row } : r)) : [...rs, row]);
+          if (table === 'tickets') setTickets((t) => type === 'DELETE' ? Object.fromEntries(Object.entries(t).filter(([k]) => k !== id)) : { ...t, [row.key]: row });
+          if (table === 'wards') setWards(type === 'DELETE' ? null : row);
+        });
+      } catch (e) { toast(`Could not reach the server: ${e.message}. Working locally.`, true); }
+    }).then((u) => { unsubAuth = u; });
+    const online = () => sync.flush(reportsRef.current).then((n) => { setPending(sync.pendingCount()); if (n) toast(`☁️ Back online, synced ${n} report${n > 1 ? 's' : ''}.`); }).catch(() => {});
+    window.addEventListener('online', online);
+    return () => { unsubAuth?.(); unsubLive?.(); window.removeEventListener('online', online); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Local first, then push. Failures stay in the queue and go out when the network is back.
+  const push = (r) => { if (!sync.enabled || !auth.user) return; sync.pushReport(r).catch(() => {}).finally(() => setPending(sync.pendingCount())); };
+  const pushTicket = (t) => { if (sync.enabled && auth.user && officer) sync.pushTicket(t).catch((e) => toast(`Ticket not saved: ${e.message}`, true)); };
 
   const hs = useMemo(() => hotspots(reports), [reports]);
   const hot = useMemo(() => hs.filter((h) => h.index >= 40), [hs]);
@@ -92,11 +128,14 @@ export default function MapApp() {
     const dup = findDuplicate(reports, r);
     if (dup) {
       // Same pile seen again: count the sighting and keep the newest photo, don't inflate the index.
-      setReports((rs) => rs.map((x) => (x.id === dup.id ? { ...x, sightings: (x.sightings || 1) + 1, photo: r.photo || x.photo, note: x.note || r.note } : x)));
+      const merged = { ...dup, sightings: (dup.sightings || 1) + 1, photo: r.photo || dup.photo, note: dup.note || r.note };
+      setReports((rs) => rs.map((x) => (x.id === dup.id ? merged : x)));
+      push(merged);
       toast(`🔁 Same pile already reported ${Math.round((r.time - dup.time) / 3600000) || '<1'} h ago. Counted as another sighting.`);
     } else {
       const next = [...reports, r];
       setReports(next);
+      push(r);
       const cell = hotspots(next).find((h) => h.key === cellOf(r.lat, r.lng).key);
       toast(`✅ Tagged as ${CATEGORIES[r.category].label}. Area index is now ${cell.index} (${cell.level}).`);
     }
@@ -106,15 +145,17 @@ export default function MapApp() {
   function toggleCleaned(id) {
     const r = reports.find((x) => x.id === id);
     if (!r) return;
-    if (r.cleaned) { toast('Report reopened'); setReports((rs) => rs.map((x) => (x.id === id ? { ...x, cleaned: false, cleanedAt: undefined, verified: false } : x))); }
+    if (r.cleaned) { toast('Report reopened'); const u = { ...r, cleaned: false, cleanedAt: undefined, verified: false }; setReports((rs) => rs.map((x) => (x.id === id ? u : x))); push(u); }
     else setVerify(r); // ask for an "after" photo first
   }
   function finishClean(id, verified) {
     setVerify(null);
-    setReports((rs) => rs.map((x) => (x.id === id ? { ...x, cleaned: true, cleanedAt: Date.now(), verified } : x)));
+    const u = { ...reports.find((x) => x.id === id), cleaned: true, cleanedAt: Date.now(), verified };
+    setReports((rs) => rs.map((x) => (x.id === id ? u : x)));
+    push(u);
     toast(verified ? '🧹✓ Cleanup verified by AI. Thank you!' : '🧹 Marked as cleaned. Thank you!');
   }
-  const deleteReport = (id) => setReports((rs) => rs.filter((r) => r.id !== id));
+  const deleteReport = (id) => { setReports((rs) => rs.filter((r) => r.id !== id)); if (sync.enabled && auth.user) sync.deleteReport(id).catch((e) => toast(`Not deleted on the server: ${e.message}`, true)); };
 
   function loadDemo() {
     const [lat, lng] = mapCenter.current, now = Date.now();
@@ -134,6 +175,7 @@ export default function MapApp() {
     }));
     const next = [...reports, ...demo];
     setReports(next);
+    demo.forEach(push);
     setFocus({ bounds: next.map((r) => [r.lat, r.lng]) });
     toast(`Loaded ${demo.length} demo reports around the map centre.`);
   }
@@ -154,7 +196,9 @@ export default function MapApp() {
       const gj = JSON.parse(await file.text());
       const features = gj.type === 'FeatureCollection' ? gj.features : gj.type === 'Feature' ? [gj] : null;
       if (!features?.length) throw new Error('not a GeoJSON FeatureCollection');
-      setWards({ type: 'FeatureCollection', features: features.filter((f) => /Polygon/.test(f.geometry?.type)) });
+      const gjw = { type: 'FeatureCollection', features: features.filter((f) => /Polygon/.test(f.geometry?.type)) };
+      setWards(gjw);
+      if (sync.enabled && auth.user) sync.pushWards(gjw).catch((e) => toast(`Wards not shared: ${e.message}`, true));
       toast(`🗺️ Loaded ${features.length} ward boundaries.`);
     } catch (e) { toast(`Could not read that file: ${e.message}`, true); }
   }
@@ -191,6 +235,9 @@ export default function MapApp() {
         <div className="wrap" style={{ maxWidth: 'none' }}>
           <Link className="logo" to="/"><span className="logo-mark" /><span>Geo<b>Tag</b></span></Link>
           <div style={{ display: 'flex', gap: 8 }}>
+            {sync.enabled && (auth.user
+              ? <span className="who"><b>{auth.user.email}</b><em className={'role ' + role}>{role}</em>{pending > 0 && <em className="role queued" title="Reports waiting to sync">{pending} queued</em>}<button className="btn btn-ghost btn-sm" onClick={() => sync.signOut()}>Sign out</button></span>
+              : <button className="btn btn-green btn-sm" onClick={() => setSignin(true)}>Sign in</button>)}
             <button className="btn btn-ghost btn-sm" onClick={loadDemo}>Demo data</button>
             <details className="menu">
               <summary className="btn btn-ghost btn-sm">Export ▾</summary>
@@ -237,8 +284,8 @@ export default function MapApp() {
                     <span className="chev">›</span>
                   </button>
                   <div className={'ticket' + (isOverdue(t) ? ' late' : '')}>
-                    <input placeholder="Assign to (crew / officer)" value={t.assignee || ''} onChange={(e) => setTickets((x) => ({ ...x, [h.key]: { ...t, assignee: e.target.value } }))} aria-label="Assignee" />
-                    <input type="date" value={t.due || ''} onChange={(e) => setTickets((x) => ({ ...x, [h.key]: { ...t, due: e.target.value || null } }))} aria-label="Due date" />
+                    <input placeholder={officer ? 'Assign to (crew / officer)' : t.assignee ? '' : 'Unassigned'} value={t.assignee || ''} disabled={!officer} onChange={(e) => setTickets((x) => ({ ...x, [h.key]: { ...t, assignee: e.target.value } }))} onBlur={() => pushTicket(tickets[h.key])} aria-label="Assignee" />
+                    <input type="date" value={t.due || ''} disabled={!officer} onChange={(e) => { const nt = { ...t, due: e.target.value || null }; setTickets((x) => ({ ...x, [h.key]: nt })); pushTicket(nt); }} aria-label="Due date" />
                     {isOverdue(t) && <span className="late-tag">overdue</span>}
                   </div>
                 </div>
@@ -269,9 +316,10 @@ export default function MapApp() {
             <h3 className="sub">Wards</h3>
             {byWard ? <>
               {byWard.slice(0, 8).map(([w, n], i) => <div className="bar" key={w} style={{ '--i': i }}><span title={w}>{w}</span><i style={{ width: `${Math.max(2, (n / (byWard[0][1] || 1)) * 100)}%`, background: 'var(--green)' }} /><span>{n}</span></div>)}
-              <button className="btn btn-ghost btn-sm" onClick={() => setWards(null)}>Remove wards</button>
-            </> : <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>🗺️ Import ward boundaries (GeoJSON)
-              <input type="file" accept=".geojson,.json,application/geo+json,application/json" hidden onChange={(e) => importWards(e.target.files[0])} /></label>}
+              {admin && <button className="btn btn-ghost btn-sm" onClick={() => { setWards(null); if (sync.enabled && auth.user) sync.pushWards(null).catch(() => {}); }}>Remove wards</button>}
+            </> : admin ? <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>🗺️ Import ward boundaries (GeoJSON)
+              <input type="file" accept=".geojson,.json,application/geo+json,application/json" hidden onChange={(e) => importWards(e.target.files[0])} /></label>
+              : <p className="empty" style={{ fontSize: 12 }}>No ward boundaries yet. An admin can import them.</p>}
 
             <p className="empty" style={{ fontSize: 12, marginTop: 14 }}>
               {memory.length ? `🧬 Vision memory: ${memory.length} labelled photo(s). Suggestions improve as you tag more.` : '🧬 Vision memory is empty. Tagged photos teach GeoTag your local waste.'}
@@ -293,10 +341,35 @@ export default function MapApp() {
       </main>
 
       {verify && <VerifyCleanup report={verify} onDone={(ok) => finishClean(verify.id, ok)} onCancel={() => setVerify(null)} />}
+      {signin && <SignIn onClose={() => setSignin(false)} toast={toast} />}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => <div key={t.id} className={'toast' + (t.bad ? ' bad' : '')}>{t.msg}</div>)}
       </div>
     </>
+  );
+}
+
+// Passwordless sign-in: Supabase emails a magic link that lands back on /app.
+function SignIn({ onClose, toast }) {
+  const dlg = useRef(null);
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { dlg.current.showModal(); }, []);
+  async function go(e) {
+    e.preventDefault(); setBusy(true);
+    try { await sync.signIn(email.trim()); setSent(true); } catch (err) { toast(err.message, true); } finally { setBusy(false); }
+  }
+  return (
+    <dialog ref={dlg} className="verify" onClose={onClose}>
+      <h2>Sign in to GeoTag</h2>
+      {sent ? <p className="muted">📬 Check <b>{email}</b> for a sign-in link. Open it on this device and you're in.</p> : <form onSubmit={go}>
+        <p className="muted">Reports you file are shared with everyone on this map. Crews and officers get extra tools after an admin sets their role.</p>
+        <input className="email" type="email" required autoFocus placeholder="you@city.gov.in" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
+        <div className="verify-actions"><button type="button" className="btn btn-ghost btn-sm" onClick={() => dlg.current.close()}>Cancel</button><button className="btn btn-primary btn-sm" disabled={busy}>{busy ? 'Sending…' : 'Email me a link'}</button></div>
+      </form>}
+      {sent && <div className="verify-actions"><button className="btn btn-primary btn-sm" onClick={() => dlg.current.close()}>Done</button></div>}
+    </dialog>
   );
 }
 
