@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { CATEGORIES, LEVEL_COLOR, cellOf, hotspots } from '../lib/geotag.js';
+import { findDuplicate, recurringCells, snapshot, indexAgo, impact, syncTickets, isOverdue, wardOf, buildReport } from '../lib/ops.js';
 import { KEYS, load, store, saveReports, loadMemory, saveMemory } from '../lib/storage.js';
+import { aiClassify, toCanvas } from '../lib/vision.js';
 import WasteMap from '../components/WasteMap.jsx';
 import ReportForm from '../components/ReportForm.jsx';
+import { downloadMd } from './Report.jsx';
 
 const RANK = { high: 1, critical: 2 };
 const DEFAULT_CENTER = [28.6139, 77.209];
@@ -14,9 +17,13 @@ export default function MapApp() {
   const [reports, setReports] = useState(() => load(KEYS.reports, []));
   const [memory, setMemory] = useState(loadMemory);
   const [places, setPlaces] = useState(() => load(KEYS.places, {}));
+  const [tickets, setTickets] = useState(() => load(KEYS.tickets, {}));
+  const [wards, setWards] = useState(() => load(KEYS.wards, null));
+  const [history, setHistory] = useState(() => load(KEYS.history, {}));
   const [location, setLocation] = useState(null); // {lat, lng, source}
   const [focus, setFocus] = useState(null); // {lat, lng, zoom} or {bounds}
   const [toasts, setToasts] = useState([]);
+  const [verify, setVerify] = useState(null); // report being marked cleaned, awaiting an "after" photo
   const [notifyOn, setNotifyOn] = useState(() => window.Notification?.permission === 'granted');
   const mapCenter = useRef(DEFAULT_CENTER);
 
@@ -28,10 +35,17 @@ export default function MapApp() {
 
   useEffect(() => { if (!saveReports(reports)) toast('Storage is full. Export to CSV and clear old data.', true); }, [reports]);
   useEffect(() => { store(KEYS.places, places); }, [places]);
+  useEffect(() => { store(KEYS.tickets, tickets); }, [tickets]);
+  useEffect(() => { store(KEYS.wards, wards); }, [wards]);
+  useEffect(() => { store(KEYS.history, history); }, [history]);
 
   const hs = useMemo(() => hotspots(reports), [reports]);
   const hot = useMemo(() => hs.filter((h) => h.index >= 40), [hs]);
+  const recurring = useMemo(() => recurringCells(reports), [reports]);
   const placeName = (h) => places[h.key] || `Area ${h.lat.toFixed(3)}, ${h.lng.toFixed(3)}`;
+
+  // One index snapshot per day, so alerts can show a 7-day trend. Tickets follow the alert list.
+  useEffect(() => { setHistory((h) => snapshot(h, hs)); setTickets((t) => syncTickets(t, hot)); }, [hs, hot]);
 
   // Alerts fire only when an area escalates (-> high -> critical), never when it improves.
   useEffect(() => {
@@ -74,19 +88,31 @@ export default function MapApp() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addReport(r, embedding) {
-    const next = [...reports, r];
-    setReports(next);
     if (embedding) setMemory(saveMemory([...memory, { c: r.category, m: embedding.m, v: embedding.v }]));
-    const cell = hotspots(next).find((h) => h.key === cellOf(r.lat, r.lng).key);
-    toast(`✅ Tagged as ${CATEGORIES[r.category].label}. Area index is now ${cell.index} (${cell.level}).`);
+    const dup = findDuplicate(reports, r);
+    if (dup) {
+      // Same pile seen again: count the sighting and keep the newest photo, don't inflate the index.
+      setReports((rs) => rs.map((x) => (x.id === dup.id ? { ...x, sightings: (x.sightings || 1) + 1, photo: r.photo || x.photo, note: x.note || r.note } : x)));
+      toast(`🔁 Same pile already reported ${Math.round((r.time - dup.time) / 3600000) || '<1'} h ago. Counted as another sighting.`);
+    } else {
+      const next = [...reports, r];
+      setReports(next);
+      const cell = hotspots(next).find((h) => h.key === cellOf(r.lat, r.lng).key);
+      toast(`✅ Tagged as ${CATEGORIES[r.category].label}. Area index is now ${cell.index} (${cell.level}).`);
+    }
     setLocation(null);
   }
 
   function toggleCleaned(id) {
     const r = reports.find((x) => x.id === id);
     if (!r) return;
-    toast(r.cleaned ? 'Report reopened' : '🧹 Marked as cleaned. Thank you!');
-    setReports((rs) => rs.map((x) => (x.id === id ? { ...x, cleaned: !x.cleaned, cleanedAt: x.cleaned ? undefined : Date.now() } : x)));
+    if (r.cleaned) { toast('Report reopened'); setReports((rs) => rs.map((x) => (x.id === id ? { ...x, cleaned: false, cleanedAt: undefined, verified: false } : x))); }
+    else setVerify(r); // ask for an "after" photo first
+  }
+  function finishClean(id, verified) {
+    setVerify(null);
+    setReports((rs) => rs.map((x) => (x.id === id ? { ...x, cleaned: true, cleanedAt: Date.now(), verified } : x)));
+    toast(verified ? '🧹✓ Cleanup verified by AI. Thank you!' : '🧹 Marked as cleaned. Thank you!');
   }
   const deleteReport = (id) => setReports((rs) => rs.filter((r) => r.id !== id));
 
@@ -102,10 +128,9 @@ export default function MapApp() {
       paper: 'cardboard boxes', hazardous: 'used batteries and medicine strips', ewaste: 'old chargers and cables', glass: 'broken beer bottles', metal: 'soda cans and scrap' };
     const pick = (a) => a[Math.floor(Math.random() * a.length)];
     const demo = clusters.flatMap((k) => Array.from({ length: k.n }, () => {
-      const s = k.spread || 0.002, category = pick(k.cats);
+      const s = k.spread || 0.002, category = pick(k.cats), time = now - Math.random() * 10 * 86400000, cleaned = Math.random() < 0.12;
       return { id: Math.random().toString(36).slice(2, 10), lat: lat + k.d[0] + (Math.random() - 0.5) * s, lng: lng + k.d[1] + (Math.random() - 0.5) * s,
-        category, volume: pick(k.vol), note: NOTES[category], photo: null, items: [], time: now - Math.random() * 10 * 86400000,
-        cleaned: Math.random() < 0.12, demo: true };
+        category, volume: pick(k.vol), note: NOTES[category], photo: null, items: [], time, cleaned, cleanedAt: cleaned ? time + Math.random() * 3 * 86400000 : undefined, demo: true };
     }));
     const next = [...reports, ...demo];
     setReports(next);
@@ -116,18 +141,27 @@ export default function MapApp() {
   function exportCsv() {
     if (!reports.length) return toast('Nothing to export yet.', true);
     const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const rows = [['id', 'time', 'lat', 'lng', 'category', 'volume', 'status', 'ai_category', 'detected_items', 'note'], ...reports.map((r) =>
-      [r.id, new Date(r.time).toISOString(), r.lat.toFixed(6), r.lng.toFixed(6), r.category, r.volume, r.cleaned ? 'cleaned' : 'open',
-        r.ai?.category || '', (r.items || []).map((i) => i.label).join('; '), r.note])];
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([rows.map((r) => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
-    a.download = `geotag-reports-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
+    const rows = [['id', 'time', 'lat', 'lng', 'ward', 'category', 'volume', 'status', 'verified', 'sightings', 'ai_category', 'detected_items', 'note'], ...reports.map((r) =>
+      [r.id, new Date(r.time).toISOString(), r.lat.toFixed(6), r.lng.toFixed(6), wards ? wardOf(r.lat, r.lng, wards) || '' : '', r.category, r.volume,
+        r.cleaned ? 'cleaned' : 'open', r.verified ? 'yes' : '', r.sightings || 1, r.ai?.category || '', (r.items || []).map((i) => i.label).join('; '), r.note])];
+    download(rows.map((r) => r.map(q).join(',')).join('\n'), 'text/csv', `geotag-reports-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+  const exportMd = () => reports.length ? downloadMd(buildReport({ reports, places, wards, tickets, history })) : toast('Nothing to export yet.', true);
+
+  async function importWards(file) {
+    if (!file) return;
+    try {
+      const gj = JSON.parse(await file.text());
+      const features = gj.type === 'FeatureCollection' ? gj.features : gj.type === 'Feature' ? [gj] : null;
+      if (!features?.length) throw new Error('not a GeoJSON FeatureCollection');
+      setWards({ type: 'FeatureCollection', features: features.filter((f) => /Polygon/.test(f.geometry?.type)) });
+      toast(`🗺️ Loaded ${features.length} ward boundaries.`);
+    } catch (e) { toast(`Could not read that file: ${e.message}`, true); }
   }
 
   function wipe() {
-    if (!confirm('Delete all reports and learned examples stored in this browser?')) return;
-    setReports([]); setMemory(saveMemory([])); store(KEYS.alerted, {});
+    if (!confirm('Delete all reports, tickets, wards and learned examples stored in this browser?')) return;
+    setReports([]); setMemory(saveMemory([])); setTickets({}); setWards(null); setHistory({}); store(KEYS.alerted, {});
   }
 
   async function enableNotifications() {
@@ -137,11 +171,19 @@ export default function MapApp() {
     toast(p === 'granted' ? '🔔 You’ll be notified when an area crosses the threshold.' : 'Notifications blocked. In-app alerts still work.', p !== 'granted');
   }
 
+  const im = useMemo(() => impact(reports), [reports]);
   const open = reports.filter((r) => !r.cleaned);
   const withItems = reports.filter((r) => r.items?.length);
   const mixedPct = withItems.length ? Math.round(100 * withItems.filter((r) => new Set(r.items.map((i) => i.category)).size > 1).length / withItems.length) + '%' : '–';
   const counts = Object.fromEntries(Object.keys(CATEGORIES).map((k) => [k, open.filter((r) => r.category === k).length]));
   const maxCount = Math.max(1, ...Object.values(counts));
+  const byWard = useMemo(() => {
+    if (!wards) return null;
+    const m = {};
+    for (const r of open) { const w = wardOf(r.lat, r.lng, wards) || 'Outside wards'; m[w] = (m[w] || 0) + 1; }
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [open, wards]); // eslint-disable-line react-hooks/exhaustive-deps
+  const overdue = hot.filter((h) => isOverdue(tickets[h.key])).length;
 
   return (
     <>
@@ -150,7 +192,14 @@ export default function MapApp() {
           <Link className="logo" to="/"><span className="logo-mark" /><span>Geo<b>Tag</b></span></Link>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-ghost btn-sm" onClick={loadDemo}>Demo data</button>
-            <button className="btn btn-ghost btn-sm" onClick={exportCsv}>Export CSV</button>
+            <details className="menu">
+              <summary className="btn btn-ghost btn-sm">Export ▾</summary>
+              <div>
+                <button onClick={exportCsv}><b>CSV</b><small>Raw rows for spreadsheets</small></button>
+                <button onClick={exportMd}><b>Markdown</b><small>Formatted report, tables included</small></button>
+                <Link to="/report"><b>PDF / print</b><small>Laid-out report page, save as PDF</small></Link>
+              </div>
+            </details>
           </div>
         </div>
       </nav>
@@ -160,7 +209,7 @@ export default function MapApp() {
           <div className="tabs" role="tablist">
             {[['report', 'Report'], ['alerts', 'Alerts'], ['overview', 'Overview']].map(([k, l]) => (
               <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
-                {l}{k === 'alerts' && hot.length > 0 && <span className="count">{hot.length}</span>}
+                {l}{k === 'alerts' && hot.length > 0 && <span className={'count' + (overdue ? ' late' : '')}>{hot.length}</span>}
               </button>
             ))}
           </div>
@@ -172,26 +221,59 @@ export default function MapApp() {
 
           {tab === 'alerts' && <section className="panel tab-panel" key="alerts" style={{ paddingBottom: 10 }}>
             <h2>Alerts {!notifyOn && <button className="btn btn-ghost btn-sm" onClick={enableNotifications}>🔔 Enable</button>}</h2>
-            {hot.length ? hot.map((h, i) => (
-              <button key={h.key} className="alert-item" style={{ '--i': i }} onClick={() => setFocus({ lat: h.lat, lng: h.lng, zoom: 17 })}>
-                <span className="badge" style={{ background: LEVEL_COLOR[h.level] }}>{h.index}</span>
-                <span><b>{placeName(h)}</b><small>{h.level.toUpperCase()} · {h.count} open · mostly {CATEGORIES[h.top].label}</small></span>
-                <span className="chev">›</span>
-              </button>
-            )) : <div className="empty-card"><b>All clear</b><p>No block is above the alert threshold (index 40). Tag waste or load demo data to see alerts here.</p></div>}
+            {overdue > 0 && <p className="late-note">⏰ {overdue} ticket{overdue > 1 ? 's' : ''} past due</p>}
+            {hot.length ? hot.map((h, i) => {
+              const t = tickets[h.key] || {}, ago = indexAgo(history, h.key, 7), trend = ago == null ? null : h.index - ago;
+              return (
+                <div key={h.key} className="alert-card" style={{ '--i': i }}>
+                  <button className="alert-item" onClick={() => setFocus({ lat: h.lat, lng: h.lng, zoom: 17 })}>
+                    <span className="badge" style={{ background: LEVEL_COLOR[h.level] }}>{h.index}</span>
+                    <span><b>{placeName(h)}</b>
+                      <small>{h.level.toUpperCase()} · {h.count} open · mostly {CATEGORIES[h.top].label}
+                        {trend != null && trend !== 0 && <em className={'trend ' + (trend > 0 ? 'up' : 'down')}>{trend > 0 ? '▲' : '▼'} {Math.abs(trend)} / 7d</em>}
+                        {recurring.has(h.key) && <em className="tag-rec">recurring site</em>}
+                        {wards && <em className="tag-ward">{wardOf(h.lat, h.lng, wards) || 'outside wards'}</em>}
+                      </small></span>
+                    <span className="chev">›</span>
+                  </button>
+                  <div className={'ticket' + (isOverdue(t) ? ' late' : '')}>
+                    <input placeholder="Assign to (crew / officer)" value={t.assignee || ''} onChange={(e) => setTickets((x) => ({ ...x, [h.key]: { ...t, assignee: e.target.value } }))} aria-label="Assignee" />
+                    <input type="date" value={t.due || ''} onChange={(e) => setTickets((x) => ({ ...x, [h.key]: { ...t, due: e.target.value || null } }))} aria-label="Due date" />
+                    {isOverdue(t) && <span className="late-tag">overdue</span>}
+                  </div>
+                </div>
+              );
+            }) : <div className="empty-card"><b>All clear</b><p>No block is above the alert threshold (index 40). Tag waste or load demo data to see alerts here.</p></div>}
           </section>}
 
           {tab === 'overview' && <section className="panel tab-panel" key="overview">
             <h2>Overview</h2>
             <div className="kpis">
               <div><b>{open.length}</b><span>open reports</span></div>
-              <div><b>{reports.length - open.length}</b><span>cleaned</span></div>
+              <div><b>{im.cleaned}</b><span>cleaned{im.verified ? ` · ${im.verified} ✓` : ''}</span></div>
               <div><b>{mixedPct}</b><span>mixed waste</span></div>
             </div>
+            <div className="kpis">
+              <div><b>{im.kgOpen >= 1000 ? (im.kgOpen / 1000).toFixed(1) + ' t' : im.kgOpen + ' kg'}</b><span>est. on the ground</span></div>
+              <div><b>{im.kgCleared >= 1000 ? (im.kgCleared / 1000).toFixed(1) + ' t' : im.kgCleared + ' kg'}</b><span>est. cleared</span></div>
+              <div><b>{im.avgDaysToClean == null ? '–' : im.avgDaysToClean.toFixed(1) + ' d'}</b><span>avg. time to clean</span></div>
+            </div>
+            {(im.hazardousOpen > 0 || recurring.size > 0) && <p className="empty" style={{ fontSize: 12, marginBottom: 12 }}>
+              {im.hazardousOpen > 0 && <>☣️ {im.hazardousOpen} hazardous / e-waste report{im.hazardousOpen > 1 ? 's' : ''} open. </>}
+              {recurring.size > 0 && <>🔁 {recurring.size} recurring dumping site{recurring.size > 1 ? 's' : ''}: consider a bin or scheduled pickup.</>}
+            </p>}
             {Object.entries(CATEGORIES).map(([k, c], i) => (
               <div className="bar" key={k} style={{ '--i': i }}><span>{c.label}</span><i style={{ width: `${Math.max(2, (counts[k] / maxCount) * 100)}%`, background: c.color }} /><span>{counts[k]}</span></div>
             ))}
-            <p className="empty" style={{ fontSize: 12, marginTop: 10 }}>
+
+            <h3 className="sub">Wards</h3>
+            {byWard ? <>
+              {byWard.slice(0, 8).map(([w, n], i) => <div className="bar" key={w} style={{ '--i': i }}><span title={w}>{w}</span><i style={{ width: `${Math.max(2, (n / (byWard[0][1] || 1)) * 100)}%`, background: 'var(--green)' }} /><span>{n}</span></div>)}
+              <button className="btn btn-ghost btn-sm" onClick={() => setWards(null)}>Remove wards</button>
+            </> : <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>🗺️ Import ward boundaries (GeoJSON)
+              <input type="file" accept=".geojson,.json,application/geo+json,application/json" hidden onChange={(e) => importWards(e.target.files[0])} /></label>}
+
+            <p className="empty" style={{ fontSize: 12, marginTop: 14 }}>
               {memory.length ? `🧬 Vision memory: ${memory.length} labelled photo(s). Suggestions improve as you tag more.` : '🧬 Vision memory is empty. Tagged photos teach GeoTag your local waste.'}
             </p>
             <button className="btn btn-ghost btn-sm" onClick={wipe} style={{ marginTop: 10 }}>Clear all data</button>
@@ -199,7 +281,7 @@ export default function MapApp() {
         </aside>
 
         <div className="mapbox">
-          <WasteMap reports={reports} hotspots={hs} pin={location} focus={focus} center={DEFAULT_CENTER}
+          <WasteMap reports={reports} hotspots={hs} pin={location} focus={focus} center={DEFAULT_CENTER} wards={wards} recurring={recurring}
             onPick={(lat, lng) => setLocation({ lat, lng, source: 'map pin' })}
             onMove={(c) => { mapCenter.current = c; }}
             onToggle={toggleCleaned} onDelete={deleteReport} />
@@ -210,9 +292,61 @@ export default function MapApp() {
         </div>
       </main>
 
+      {verify && <VerifyCleanup report={verify} onDone={(ok) => finishClean(verify.id, ok)} onCancel={() => setVerify(null)} />}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => <div key={t.id} className={'toast' + (t.bad ? ' bad' : '')}>{t.msg}</div>)}
       </div>
     </>
+  );
+}
+
+function download(text, type, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+}
+
+// Before/after check: the same zero-shot model that found the waste confirms the "after" photo is clean.
+function VerifyCleanup({ report, onDone, onCancel }) {
+  const dlg = useRef(null);
+  const [status, setStatus] = useState(null);
+  const [after, setAfter] = useState(null);
+  const [result, setResult] = useState(null); // {ok, top}
+  useEffect(() => { dlg.current.showModal(); }, []);
+
+  async function onFile(file) {
+    if (!file) return;
+    const bmp = await createImageBitmap(file).catch(() => null);
+    if (!bmp) return setStatus('That image could not be read.');
+    const url = toCanvas(bmp, bmp.width, bmp.height).toDataURL('image/jpeg', 0.6);
+    setAfter(url); setResult(null); setStatus('🤖 Checking the photo…');
+    try {
+      const ai = await aiClassify(url, (f) => setStatus(`🤖 Downloading the free AI model… ${Math.round(f * 100)}%`));
+      setStatus(null);
+      setResult({ ok: ai.noWaste || ai.confidence < 0.45, top: ai.top[0] });
+    } catch (e) { setStatus(`⚠️ AI unavailable (${e.message}). You can still mark it cleaned.`); }
+  }
+
+  return (
+    <dialog ref={dlg} className="verify" onClose={onCancel}>
+      <h2>Confirm cleanup</h2>
+      <p className="muted">Add an “after” photo and GeoTag will verify that the {CATEGORIES[report.category].label.toLowerCase()} is gone. Verified cleanups count in reports.</p>
+      <div className="verify-pics">
+        <div>{report.photo ? <img src={report.photo} alt="Before" /> : <div className="ph">No before photo</div>}<span>Before</span></div>
+        <label className="drop">
+          <input type="file" accept="image/*" aria-label="Upload the after photo" onChange={(e) => onFile(e.target.files[0])} />
+          {after ? <img src={after} alt="After" /> : <span>📷 <b>Add after photo</b></span>}
+        </label>
+      </div>
+      {status && <div className="ai">{status}</div>}
+      {result && <div className={'ai ' + (result.ok ? 'ok' : 'warn')}>{result.ok ? '✅ Looks clean. Verified.' : `⚠️ Still looks like ${CATEGORIES[result.top.category].label.toLowerCase()} (${Math.round(result.top.share * 100)}%). Mark anyway?`}</div>}
+      <div className="verify-actions">
+        <button className="btn btn-ghost btn-sm" onClick={() => dlg.current.close()}>Cancel</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => onDone(false)}>Mark cleaned without photo</button>
+        {result?.ok && <button className="btn btn-green btn-sm" onClick={() => onDone(true)}>✓ Verified clean</button>}
+        {result && !result.ok && <button className="btn btn-primary btn-sm" onClick={() => onDone(false)}>Mark cleaned anyway</button>}
+      </div>
+    </dialog>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { CATEGORIES, LEVEL_COLOR } from '../lib/geotag.js';
+import { wardName } from '../lib/ops.js';
 
 const RADIUS = { small: 5, medium: 7, large: 10 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -22,7 +23,7 @@ function popupHtml(r) {
 }
 
 // Leaflet is imperative; React owns the data, this component syncs layers whenever it changes.
-export default function WasteMap({ reports, hotspots, pin, focus, center, onPick, onMove, onToggle, onDelete }) {
+export default function WasteMap({ reports, hotspots, pin, focus, center, wards, recurring, onPick, onMove, onToggle, onDelete }) {
   const el = useRef(null);
   const m = useRef(null);
   const cb = useRef({});
@@ -35,9 +36,11 @@ export default function WasteMap({ reports, hotspots, pin, focus, center, onPick
       maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(map);
     const cells = L.layerGroup().addTo(map);
+    const wardLayer = L.layerGroup().addTo(map);
     const cats = Object.fromEntries(Object.keys(CATEGORIES).map((k) => [k, L.layerGroup().addTo(map)]));
     L.control.layers(null, {
       'Waste index': cells,
+      'Wards': wardLayer,
       ...Object.fromEntries(Object.entries(CATEGORIES).map(([k, c]) => [`<span class="dot" style="background:${c.color}"></span> ${c.label}`, cats[k]])),
     }, { position: 'topright' }).addTo(map);
     map.on('click', (e) => cb.current.onPick(e.latlng.lat, e.latlng.lng));
@@ -52,7 +55,7 @@ export default function WasteMap({ reports, hotspots, pin, focus, center, onPick
     node.addEventListener('click', onClick);
     const ro = new ResizeObserver(() => map.invalidateSize());
     ro.observe(node);
-    m.current = { map, cells, cats, pin: null };
+    m.current = { map, cells, cats, wardLayer, pin: null };
     return () => { node.removeEventListener('click', onClick); ro.disconnect(); map.remove(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -62,8 +65,9 @@ export default function WasteMap({ reports, hotspots, pin, focus, center, onPick
     Object.values(cats).forEach((l) => l.clearLayers());
     for (const h of hotspots) {
       L.rectangle(h.bounds, { color: LEVEL_COLOR[h.level], weight: 1, fillOpacity: 0.12 + h.index / 250 })
-        .bindTooltip(`Waste index <b>${h.index}</b> · ${h.level} · ${h.count} open report(s)`, { sticky: true })
+        .bindTooltip(`Waste index <b>${h.index}</b> · ${h.level} · ${h.count} open report(s)${recurring?.has(h.key) ? ' · <b>recurring site</b>' : ''}`, { sticky: true })
         .addTo(cells);
+      if (recurring?.has(h.key)) L.marker([h.bounds[1][0], h.bounds[0][1]], { interactive: false, icon: L.divIcon({ className: '', html: '<div class="rec-flag">🔁</div>', iconSize: [22, 22], iconAnchor: [0, 22] }) }).addTo(cells);
     }
     for (const r of reports) {
       const c = CATEGORIES[r.category] || CATEGORIES.nonbiodegradable;
@@ -72,7 +76,13 @@ export default function WasteMap({ reports, hotspots, pin, focus, center, onPick
         fillOpacity: r.cleaned ? 0.5 : 0.95, dashArray: r.cleaned ? '3' : null,
       }).bindPopup(() => popupHtml(r), { maxWidth: 240 }).addTo(cats[r.category] || cats.nonbiodegradable);
     }
-  }, [reports, hotspots]);
+  }, [reports, hotspots, recurring]);
+
+  useEffect(() => {
+    const { wardLayer } = m.current;
+    wardLayer.clearLayers();
+    if (wards) L.geoJSON(wards, { style: { color: '#111a14', weight: 1.5, dashArray: '4 4', fillOpacity: 0.02 }, onEachFeature: (f, l) => l.bindTooltip(wardName(f), { sticky: true }) }).addTo(wardLayer);
+  }, [wards]);
 
   useEffect(() => {
     const s = m.current;

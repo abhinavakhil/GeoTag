@@ -2,6 +2,7 @@
 import assert from 'assert';
 import { createRequire } from 'module';
 import * as G from './geotag.js';
+import * as O from './ops.js';
 const require = createRequire(import.meta.url);
 
 const cat = (t) => (G.classifyText(t) || {}).category;
@@ -106,5 +107,35 @@ assert.equal(d({ sum: { category: 'metal' }, ai: { category: 'plastic', confiden
 assert.equal(d({ ai: { category: 'plastic', confidence: 0.9, noWaste: true } }), null);
 assert.equal(d({ learned: { category: 'hazardous', confidence: 0.9, similarity: 0.9 }, ai: { category: 'plastic', confidence: 0.9 } }), 'hazardous');
 assert.equal(d({ learned: { category: 'hazardous', confidence: 0.9, similarity: 0.7 }, learnedMinSim: 0.75, ai: { category: 'plastic', confidence: 0.9 } }), 'plastic');
+
+// ops: duplicates, wards, trends, impact, tickets, report
+const base = { lat: 28.6139, lng: 77.209, category: 'plastic', volume: 'medium', time: now };
+assert.ok(O.findDuplicate([base], { ...base, lat: 28.614 })); // ~11 m
+assert.equal(O.findDuplicate([base], { ...base, lat: 28.62 }), null); // ~680 m
+assert.equal(O.findDuplicate([base], { ...base, category: 'glass' }), null);
+assert.equal(O.findDuplicate([{ ...base, cleaned: true }], base), null);
+const sq = { type: 'Polygon', coordinates: [[[77.2, 28.6], [77.22, 28.6], [77.22, 28.62], [77.2, 28.62], [77.2, 28.6]]] };
+assert.ok(O.pointInPolygon(28.61, 77.21, sq));
+assert.ok(!O.pointInPolygon(28.63, 77.21, sq));
+const wards = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: 'Ward 1' }, geometry: sq }] };
+assert.equal(O.wardOf(28.61, 77.21, wards), 'Ward 1');
+assert.equal(O.wardOf(28.7, 77.21, wards), null);
+const D = 86400000;
+const rec = O.recurringCells([{ ...base, cleaned: true, cleanedAt: now - 5 * D, time: now - 6 * D },
+  { ...base, cleaned: true, cleanedAt: now - 3 * D, time: now - 4 * D }, { ...base, time: now - D }]);
+assert.ok(rec.has(G.cellOf(base.lat, base.lng).key));
+assert.equal(O.recurringCells([base]).size, 0);
+const hist = O.snapshot({}, G.hotspots([{ ...base, time: now - 8 * D }], now - 8 * D), now - 8 * D);
+assert.equal(O.indexAgo(hist, G.cellOf(base.lat, base.lng).key, 7, now), 23);
+assert.equal(O.indexAgo({}, 'x', 7, now), null);
+const im = O.impact([base, { ...base, cleaned: true, cleanedAt: now, time: now - 2 * D, volume: 'large', verified: true }], now);
+assert.equal(im.kgCleared, 150); assert.equal(im.kgOpen, 25); assert.equal(im.avgDaysToClean, 2); assert.equal(im.verified, 1);
+const tk = O.syncTickets({}, [{ key: 'a' }], now);
+assert.equal(tk.a.closedAt, null);
+assert.ok(O.syncTickets(tk, [], now + 1).a.closedAt);
+assert.ok(O.isOverdue({ due: '2000-01-01' }, now));
+assert.ok(!O.isOverdue({ due: '2000-01-01', closedAt: 1 }, now));
+const md = O.toMarkdown(O.buildReport({ reports: [base, base, base], wards, now }));
+assert.ok(md.includes('# GeoTag waste report') && md.includes('Ward 1') && md.includes('| open |'));
 
 console.log('all tests passed');

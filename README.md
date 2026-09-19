@@ -20,6 +20,17 @@ No backend. No API keys. No photos uploaded. Everything runs in the browser.
 - **Close the loop**: mark spots as cleaned, watch the index fall, export a CSV for your ward office.
 - **Self-learning**: a k-NN over image embeddings learns from every photo you label, so suggestions improve for your local waste.
 
+## For municipalities and organisations
+
+- **Reports in three formats**: CSV for spreadsheets, Markdown with tables, and a laid-out print page at `/report` you save as PDF.
+- **Tickets and SLAs**: every alerted block becomes a ticket. Assign it to a crew, set a due date, see overdue ones flagged. Tickets close themselves when the block drops below the threshold.
+- **AI cleanup verification**: when marking a spot cleaned, add an "after" photo. The same on-device model confirms the waste is gone. Verified cleanups are counted separately in reports.
+- **Duplicate merging**: a report of the same stream within 30 m and 24 h of an open one is counted as another sighting, so the index reflects piles, not how many people photographed one pile.
+- **Ward boundaries**: import a GeoJSON of wards or zones. Alerts, reports and the CSV are tagged by ward, the Overview rolls up per ward, and outlines are drawn on the map.
+- **Trends and recurring sites**: a daily index snapshot gives each alert a 7-day trend. Blocks cleaned twice and dirty again are flagged as recurring dumping sites that need a bin or scheduled pickup.
+- **Impact metrics**: estimated kilograms on the ground and cleared, hazardous and e-waste open, and average time to clean. Numbers for council presentations and grant applications.
+- **Installable, works offline**: a PWA with an app-shell service worker. Open it from the home screen and file reports without signal; they are saved locally.
+
 ## The 8 waste streams
 
 | Stream | Bin |
@@ -74,15 +85,18 @@ Open the app, tap **Demo data** to see sample reports around the map centre, or 
 ```
 src/
   pages/Landing.jsx        landing page: globe, sorter, index calculator
-  pages/MapApp.jsx         live map, tabbed sidebar (Report / Alerts / Overview)
+  pages/MapApp.jsx         live map, tabbed sidebar (Report / Alerts / Overview), tickets, cleanup verification
+  pages/Report.jsx         print-ready report page (/report), Markdown download
   components/ReportForm.jsx  photo upload, live scan, category and location
   components/WasteMap.jsx  Leaflet map, heat cells, pins
   components/Globe.jsx     dotted globe with an illustrative report feed
   lib/geotag.js            segregation rules, waste index, EXIF GPS, k-NN (pure, tested)
+  lib/ops.js               duplicates, wards, trends, tickets, impact, report builder (pure, tested)
   lib/vision.js            the three browser models, lazy-loaded
   lib/storage.js           localStorage helpers
   data/ai-prompts.json     pre-embedded text prompts for zero-shot scoring
 tools/embed-prompts.mjs    regenerates ai-prompts.json after editing AI_PROMPTS
+public/sw.js, manifest.webmanifest   PWA: offline app shell and install metadata
 ```
 
 After editing `AI_PROMPTS`, run `npm run embed` to rebuild `src/data/ai-prompts.json`.
