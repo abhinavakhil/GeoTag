@@ -10,6 +10,7 @@ const DEFAULT_CENTER = [28.6139, 77.209];
 let greeted = false; // StrictMode runs mount effects twice in dev; greet once
 
 export default function MapApp() {
+  const [tab, setTab] = useState('report');
   const [reports, setReports] = useState(() => load(KEYS.reports, []));
   const [memory, setMemory] = useState(loadMemory);
   const [places, setPlaces] = useState(() => load(KEYS.places, {}));
@@ -146,7 +147,7 @@ export default function MapApp() {
     <>
       <nav className="nav">
         <div className="wrap" style={{ maxWidth: 'none' }}>
-          <Link className="logo" to="/"><span className="logo-mark" />GeoTag</Link>
+          <Link className="logo" to="/"><span className="logo-mark" /><span>Geo<b>Tag</b></span></Link>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-ghost btn-sm" onClick={loadDemo}>Demo data</button>
             <button className="btn btn-ghost btn-sm" onClick={exportCsv}>Export CSV</button>
@@ -156,34 +157,45 @@ export default function MapApp() {
 
       <main className="app">
         <aside className="side">
-          <ReportForm location={location} memory={memory} toast={toast} onSubmit={addReport}
-            onLocation={(loc, fly) => { setLocation(loc); if (fly) setFocus({ lat: loc.lat, lng: loc.lng, zoom: 16 }); }} />
+          <div className="tabs" role="tablist">
+            {[['report', 'Report'], ['alerts', 'Alerts'], ['overview', 'Overview']].map(([k, l]) => (
+              <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
+                {l}{k === 'alerts' && hot.length > 0 && <span className="count">{hot.length}</span>}
+              </button>
+            ))}
+          </div>
 
-          <section className="panel" style={{ paddingBottom: 10 }}>
+          {tab === 'report' && <div className="tab-panel" key="report">
+            <ReportForm location={location} memory={memory} toast={toast} onSubmit={addReport}
+              onLocation={(loc, fly) => { setLocation(loc); if (fly) setFocus({ lat: loc.lat, lng: loc.lng, zoom: 16 }); }} />
+          </div>}
+
+          {tab === 'alerts' && <section className="panel tab-panel" key="alerts" style={{ paddingBottom: 10 }}>
             <h2>Alerts {!notifyOn && <button className="btn btn-ghost btn-sm" onClick={enableNotifications}>🔔 Enable</button>}</h2>
-            {hot.length ? hot.map((h) => (
-              <button key={h.key} className="alert-item" onClick={() => setFocus({ lat: h.lat, lng: h.lng, zoom: 17 })}>
+            {hot.length ? hot.map((h, i) => (
+              <button key={h.key} className="alert-item" style={{ '--i': i }} onClick={() => setFocus({ lat: h.lat, lng: h.lng, zoom: 17 })}>
                 <span className="badge" style={{ background: LEVEL_COLOR[h.level] }}>{h.index}</span>
                 <span><b>{placeName(h)}</b><small>{h.level.toUpperCase()} · {h.count} open · mostly {CATEGORIES[h.top].label}</small></span>
+                <span className="chev">›</span>
               </button>
-            )) : <p className="empty">No areas above the alert threshold (index 40). 🎉</p>}
-          </section>
+            )) : <div className="empty-card"><b>All clear</b><p>No block is above the alert threshold (index 40). Tag waste or load demo data to see alerts here.</p></div>}
+          </section>}
 
-          <section className="panel">
+          {tab === 'overview' && <section className="panel tab-panel" key="overview">
             <h2>Overview</h2>
             <div className="kpis">
               <div><b>{open.length}</b><span>open reports</span></div>
               <div><b>{reports.length - open.length}</b><span>cleaned</span></div>
               <div><b>{mixedPct}</b><span>mixed waste</span></div>
             </div>
-            {Object.entries(CATEGORIES).map(([k, c]) => (
-              <div className="bar" key={k}><span>{c.label}</span><i style={{ width: `${Math.max(2, (counts[k] / maxCount) * 100)}%`, background: c.color }} /><span>{counts[k]}</span></div>
+            {Object.entries(CATEGORIES).map(([k, c], i) => (
+              <div className="bar" key={k} style={{ '--i': i }}><span>{c.label}</span><i style={{ width: `${Math.max(2, (counts[k] / maxCount) * 100)}%`, background: c.color }} /><span>{counts[k]}</span></div>
             ))}
             <p className="empty" style={{ fontSize: 12, marginTop: 10 }}>
               {memory.length ? `🧬 Vision memory: ${memory.length} labelled photo(s). Suggestions improve as you tag more.` : '🧬 Vision memory is empty. Tagged photos teach GeoTag your local waste.'}
             </p>
             <button className="btn btn-ghost btn-sm" onClick={wipe} style={{ marginTop: 10 }}>Clear all data</button>
-          </section>
+          </section>}
         </aside>
 
         <div className="mapbox">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { CATEGORIES, LEVEL_COLOR, classifyText, hotspots } from '../lib/geotag.js';
 import { KEYS, load } from '../lib/storage.js';
@@ -21,13 +21,32 @@ function useReveal() {
   }, []);
 }
 
+// Counts up from 0 the first time it scrolls into view. Shows the final value with reduced motion.
+function Count({ to, dp = 0, suffix = '' }) {
+  const ref = useRef(null);
+  const [v, setV] = useState(to);
+  useEffect(() => {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      io.disconnect();
+      const t0 = performance.now(), dur = 1400;
+      const tick = (t) => { const k = Math.min(1, (t - t0) / dur); setV(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }, { threshold: 0.5 });
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, [to]);
+  return <b ref={ref}>{v.toFixed(dp)}{suffix}</b>;
+}
+
 export default function Landing() {
   useReveal();
   return (
     <div className="landing">
       <nav className="nav">
         <div className="wrap">
-          <Link className="logo" to="/"><span className="logo-mark" />GeoTag</Link>
+          <Link className="logo" to="/"><span className="logo-mark" /><span>Geo<b>Tag</b></span></Link>
           <div className="nav-links">
             <a href="#how">How it works</a>
             <a href="#ai">AI-first</a>
@@ -76,9 +95,9 @@ export default function Landing() {
           <h2>Waste is growing <em className="accent">faster than we track it</em></h2>
         </div>
         <div className="facts reveal">
-          <div><b>2.01 bn</b><p>tonnes of municipal solid waste generated worldwide each year.</p></div>
-          <div><b>33%</b><p>of it is not managed in an environmentally safe way.</p></div>
-          <div><b>3.40 bn</b><p>tonnes a year expected by 2050 if nothing changes.</p></div>
+          <div style={{ '--i': 0 }}><Count to={2.01} dp={2} suffix=" bn" /><p>tonnes of municipal solid waste generated worldwide each year.</p></div>
+          <div style={{ '--i': 1 }}><Count to={33} suffix="%" /><p>of it is not managed in an environmentally safe way.</p></div>
+          <div style={{ '--i': 2 }}><Count to={3.4} dp={2} suffix=" bn" /><p>tonnes a year expected by 2050 if nothing changes.</p></div>
         </div>
         <p className="source">Source: World Bank, <i>What a Waste 2.0</i> (2018).</p>
       </section>
@@ -96,7 +115,7 @@ export default function Landing() {
               ['Map', 'Reports are grouped into ~500 m cells. Each cell is scored by volume, how harmful the waste is and how recent it is.'],
               ['Alert', 'When a cell gets worse, you get an alert so crews can go to the worst places first.'],
             ].map(([t, d], i) => (
-              <div className="step" key={t}><span className="n">0{i + 1}</span><h3>{t}</h3><p>{d}</p></div>
+              <div className="step" key={t} style={{ '--i': i }}><span className="n">0{i + 1}</span><h3>{t}</h3><p>{d}</p></div>
             ))}
           </div>
         </div>
@@ -116,10 +135,10 @@ export default function Landing() {
             </ul>
           </div>
           <div className="pipe reveal">
-            <div className="pipe-card"><span className="ico">🧠</span><div><b>MobileCLIP zero-shot</b><small>Reads the whole scene and scores all 8 waste streams</small></div><em>on device</em></div>
-            <div className="pipe-card"><span className="ico">🎯</span><div><b>COCO-SSD detection</b><small>Draws a box around every bottle, can and phone</small></div><em>on device</em></div>
-            <div className="pipe-card"><span className="ico">🧬</span><div><b>Your k-NN memory</b><small>Learns from every photo you label</small></div><em>learns</em></div>
-            <div className="pipe-card out"><span className="ico">♻️</span><div><b>Plastic · Blue bin</b><small>Rinse, flatten, recycle. Mixed waste is flagged.</small></div></div>
+            <div className="pipe-card" style={{ '--i': 0 }}><span className="ico">🧠</span><div><b>MobileCLIP zero-shot</b><small>Reads the whole scene and scores all 8 waste streams</small></div><em>on device</em></div>
+            <div className="pipe-card" style={{ '--i': 1 }}><span className="ico">🎯</span><div><b>COCO-SSD detection</b><small>Draws a box around every bottle, can and phone</small></div><em>on device</em></div>
+            <div className="pipe-card" style={{ '--i': 2 }}><span className="ico">🧬</span><div><b>Your k-NN memory</b><small>Learns from every photo you label</small></div><em>learns</em></div>
+            <div className="pipe-card out" style={{ '--i': 3 }}><span className="ico">♻️</span><div><b>Plastic · Blue bin</b><small>Rinse, flatten, recycle. Mixed waste is flagged.</small></div></div>
           </div>
         </div>
       </section>
@@ -130,11 +149,11 @@ export default function Landing() {
       <section id="features" className="wrap">
         <div className="head center reveal"><h2>Built for streets, <em className="accent">not spreadsheets</em></h2></div>
         <div className="bento reveal">
-          <div className="tile wide dark"><span className="ico">📍</span><h3>Geo-tagging</h3><p>Uses your phone's GPS, reads the location stored in a photo, or lets you drag a pin. Every report lands exactly where the waste is.</p></div>
-          <div className="tile wide mint"><span className="ico">🎥</span><h3>Live camera scan</h3><p>Point your camera at a pile and see labelled boxes appear in real time. Tap to capture and file the report.</p></div>
-          <div className="tile"><span className="ico">🌡️</span><h3>Waste-index heatmap</h3><p>Every block gets a 0–100 score. Hazardous waste and large dumps count more.</p></div>
-          <div className="tile"><span className="ico">🔔</span><h3>Escalation alerts</h3><p>You're notified the moment an area turns high or critical. Improvements never trigger alerts.</p></div>
-          <div className="tile"><span className="ico">🧹</span><h3>Close the loop</h3><p>Mark spots as cleaned, watch the index fall, and export a CSV for your ward office.</p></div>
+          <div className="tile wide dark" style={{ '--i': 0 }}><span className="ico">📍</span><h3>Geo-tagging</h3><p>Uses your phone's GPS, reads the location stored in a photo, or lets you drag a pin. Every report lands exactly where the waste is.</p></div>
+          <div className="tile wide mint" style={{ '--i': 1 }}><span className="ico">🎥</span><h3>Live camera scan</h3><p>Point your camera at a pile and see labelled boxes appear in real time. Tap to capture and file the report.</p></div>
+          <div className="tile" style={{ '--i': 2 }}><span className="ico">🌡️</span><h3>Waste-index heatmap</h3><p>Every block gets a 0–100 score. Hazardous waste and large dumps count more.</p></div>
+          <div className="tile" style={{ '--i': 3 }}><span className="ico">🔔</span><h3>Escalation alerts</h3><p>You're notified the moment an area turns high or critical. Improvements never trigger alerts.</p></div>
+          <div className="tile" style={{ '--i': 4 }}><span className="ico">🧹</span><h3>Close the loop</h3><p>Mark spots as cleaned, watch the index fall, and export a CSV for your ward office.</p></div>
         </div>
       </section>
 
@@ -142,9 +161,9 @@ export default function Landing() {
         <div className="wrap">
           <div className="head center reveal"><h2>One map, <em className="accent">three kinds of heroes</em></h2></div>
           <div className="who reveal">
-            <div><h3>Citizens</h3><p>Report a dump in 10 seconds and learn which bin things go in.</p></div>
-            <div><h3>Municipalities</h3><p>Send trucks where the index is highest, not where they went yesterday.</p></div>
-            <div><h3>NGOs & RWAs</h3><p>Plan cleanup drives around real hotspots and show the drop in the index afterwards.</p></div>
+            <div style={{ '--i': 0 }}><h3>Citizens</h3><p>Report a dump in 10 seconds and learn which bin things go in.</p></div>
+            <div style={{ '--i': 1 }}><h3>Municipalities</h3><p>Send trucks where the index is highest, not where they went yesterday.</p></div>
+            <div style={{ '--i': 2 }}><h3>NGOs & RWAs</h3><p>Plan cleanup drives around real hotspots and show the drop in the index afterwards.</p></div>
           </div>
         </div>
       </section>
@@ -171,7 +190,7 @@ export default function Landing() {
 
       <footer>
         <div className="wrap">
-          <Link className="logo" to="/" style={{ fontSize: 17 }}><span className="logo-mark" style={{ width: 24, height: 24 }} />GeoTag</Link>
+          <Link className="logo" to="/" style={{ fontSize: 17 }}><span className="logo-mark" style={{ width: 24, height: 24 }} /><span>Geo<b>Tag</b></span></Link>
           <span>Map data © OpenStreetMap contributors · AI by TensorFlow.js & Transformers.js</span>
         </div>
       </footer>
@@ -220,8 +239,8 @@ function Sorter() {
             </div>
           </div>
           <div className="cats">
-            {Object.entries(CATEGORIES).map(([k, cat]) => (
-              <div key={k} className={'cat' + (hit?.category === k ? ' hit' : '')} style={{ '--c': cat.color }}>
+            {Object.entries(CATEGORIES).map(([k, cat], i) => (
+              <div key={k} className={'cat' + (hit?.category === k ? ' hit' : '')} style={{ '--c': cat.color, '--i': i }}>
                 <span className="bin">{cat.bin}</span><h3>{cat.label}</h3><p>{EXAMPLES[k]}</p>
               </div>
             ))}

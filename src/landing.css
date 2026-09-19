@@ -156,12 +156,36 @@
 .landing footer { padding: 40px 0 56px; color: var(--muted); font-size: 14px; }
 .landing footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
 
-/* reveal on scroll */
+/* reveal on scroll: whole block fades up, children of grids stagger in after it */
 .js .reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s ease, transform .7s ease; }
 .js .reveal.in { opacity: 1; transform: none; }
+.js .reveal > .step, .js .reveal > .tile, .js .reveal > .pipe-card, .js .facts > div, .js .who > div, .js .cats > .cat {
+  opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s ease; transition-delay: calc(var(--i, 0) * 90ms); }
+.js .reveal.in > .step, .js .reveal.in > .tile, .js .reveal.in > .pipe-card, .js .reveal.in.facts > div, .js .reveal.in.who > div, .js .reveal.in .cats > .cat {
+  opacity: 1; transform: none; }
+.cats { --i: 0; }
+
+/* hero entrance */
+.js .hero-copy > *, .js .strip { animation: rise .8s cubic-bezier(.2,.7,.2,1) both; }
+.js .hero-copy > :nth-child(1) { animation-delay: .05s; } .js .hero-copy > :nth-child(2) { animation-delay: .15s; }
+.js .hero-copy > :nth-child(3) { animation-delay: .3s; } .js .hero-copy > :nth-child(4) { animation-delay: .42s; } .js .strip { animation-delay: .6s; }
+.js .globe-wrap { animation: fade 1.2s .5s ease both; }
+@keyframes rise { from { opacity: 0; transform: translateY(26px); } }
+@keyframes fade { from { opacity: 0; } }
+
+/* hover lift */
+.step, .tile, .pipe-card, .who > div, .facts > div { transition: transform .25s ease, box-shadow .25s ease, opacity .6s ease; }
+.step:hover, .tile:hover, .who > div:hover, .facts > div:hover { transform: translateY(-4px); box-shadow: 0 18px 40px -22px rgba(17,26,20,.35); }
+.pipe-card:hover { transform: translateX(4px); }
+.step:hover .n { animation: pulse .6s ease; }
+@keyframes pulse { 50% { transform: scale(1.15); } }
+.landing .chips button, .cta-row .btn { transition: transform .15s, background .15s, box-shadow .15s; }
+.landing .chips button:hover { transform: translateY(-2px); }
+
 @media (prefers-reduced-motion: reduce) {
-  .js .reveal { opacity: 1; transform: none; transition: none; }
-  .ticker-track, .live { animation: none; }
+  .js .reveal, .js .reveal > *, .js .facts > div, .js .who > div, .js .cats > .cat { opacity: 1; transform: none; transition: none; }
+  .js .hero-copy > *, .js .strip, .js .globe-wrap, .ticker-track, .live { animation: none; }
+  .step:hover, .tile:hover, .who > div:hover, .facts > div:hover, .pipe-card:hover { transform: none; }
 }
 
 @media (max-width: 960px) {

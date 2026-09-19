@@ -165,7 +165,7 @@ export default function ReportForm({ location, memory, toast, onLocation, onSubm
         </div>
       </div>
 
-      <button className="btn btn-primary" style={{ width: '100%' }}>Tag this waste</button>
+      <div className="submit"><button className="btn btn-primary">Tag this waste</button></div>
       {camOpen && <LiveScan onClose={() => setCamOpen(false)} onCapture={(c) => { setCamOpen(false); analyze(c); }} />}
     </form>
   );
